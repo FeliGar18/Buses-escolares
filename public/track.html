@@ -3,55 +3,80 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Seguimiento del bus</title>
+  <title>Seguimiento del bus en vivo</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
-<body>
-  <header class="barra">
-    <h1 id="titulo">🚌 Seguimiento</h1>
-    <nav><a href="/">← Volver</a></nav>
+<body class="app">
+  <header class="hero">
+    <div class="marca">
+      <div class="logo">🚌</div>
+      <div>
+        <h1 id="titulo">Seguimiento</h1>
+        <p id="subtitulo">Ubicación en tiempo real</p>
+      </div>
+    </div>
+    <nav><a href="/">← Todos los buses</a></nav>
   </header>
 
-  <div class="layout-mapa">
-    <div class="panel">
-      <div class="eta-box">
-        <div class="chico">Estado del bus</div>
-        <div class="grande" id="estado">—</div>
-        <div class="chico" id="actualizado"></div>
+  <div class="track-layout">
+    <div class="track-panel">
+      <!-- ETA destacado -->
+      <div class="eta-hero">
+        <div class="estado-line"><span id="estadoDot">⚪</span> <span id="estadoTxt">Esperando señal…</span></div>
+        <div class="tiempo" id="etaTiempo">—</div>
+        <div class="sub" id="etaSub">Selecciona tu parada para ver el tiempo de llegada</div>
       </div>
 
-      <div class="card">
-        <h2>Mi parada</h2>
-        <select id="selParada"><option value="">— Elige tu parada —</option></select>
-        <div id="distParada" class="muted" style="margin-top:10px;"></div>
+      <!-- Alerta de cercanía (oculta por defecto) -->
+      <div id="alertaCerca" style="display:none;margin-bottom:16px;">
+        <div class="alerta-cerca">🔔 ¡El bus está llegando a tu parada!</div>
       </div>
 
-      <div class="card">
-        <h2>Paradas de la ruta</h2>
-        <ul class="lista-paradas" id="paradas"></ul>
+      <!-- Mi parada -->
+      <div class="card-soft">
+        <h2>📍 Mi parada</h2>
+        <select id="selParada" class="sel-bonito" style="width:100%;margin-top:6px;">
+          <option value="">— Elige tu parada —</option>
+        </select>
+        <div id="distInfo"></div>
       </div>
 
-      <p class="muted">Comparte este link con otros apoderados: la página se actualiza sola.</p>
+      <!-- Recorrido (timeline) -->
+      <div class="card-soft">
+        <h2>🗺️ Recorrido de la ruta</h2>
+        <ul class="timeline" id="timeline"></ul>
+      </div>
+
+      <!-- Compartir -->
+      <button class="btn-compartir" id="btnCompartir">🔗 Compartir seguimiento</button>
+      <p class="muted" style="text-align:center;margin-top:12px;">Esta página se actualiza sola. No cierres para seguir viendo el bus.</p>
     </div>
-    <div class="panel-mapa"><div id="map"></div></div>
+
+    <div class="track-mapa">
+      <div class="flotante" id="flotante" style="display:none;">
+        <span class="badge-2 on"><span class="dot"></span>En vivo</span>
+        <span id="flotanteVel">— km/h</span>
+      </div>
+      <div id="map"></div>
+    </div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const busId = new URLSearchParams(location.search).get('bus');
-    let map, busMarker, miParadaMarker = null;
-    let busLatLng = null, miParadaLatLng = null;
+    let map, busMarker, miParadaMarker = null, rastro = null;
+    let busLatLng = null, miParadaLatLng = null, RUTA = null;
+    let ultimaSenal = 0, rastroPts = [];
 
-    // Icono del bus
     const busIcon = L.divIcon({
-      html: '<div style="font-size:30px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.4))">🚌</div>',
-      className: '', iconSize: [30, 30], iconAnchor: [15, 15],
+      html: '<div style="font-size:34px;filter:drop-shadow(0 3px 5px rgba(0,0,0,.45));transition:transform .3s;">🚌</div>',
+      className: '', iconSize: [34, 34], iconAnchor: [17, 17],
     });
 
     function initMap(center) {
-      map = L.map('map').setView(center, 14);
+      map = L.map('map', { zoomControl: true }).setView(center, 14);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap', maxZoom: 19,
       }).addTo(map);
@@ -67,80 +92,113 @@
     function actualizarDistancia() {
       if (!busLatLng || !miParadaLatLng) return;
       const km = distanciaKm(busLatLng, miParadaLatLng);
-      const minutos = Math.max(1, Math.round((km / 25) * 60)); // ~25 km/h promedio urbano
-      const box = document.getElementById('distParada');
-      let texto = `🚌 El bus está a <b>${km.toFixed(2)} km</b> de tu parada (~${minutos} min).`;
-      if (km < 0.4) texto = '🔔 <b>¡El bus está llegando a tu parada!</b>';
-      box.innerHTML = texto;
+      const minutos = Math.max(1, Math.round((km / 25) * 60));
+      document.getElementById('distInfo').innerHTML =
+        `<div class="dist-info">📏 El bus está a <b>&nbsp;${km.toFixed(2)} km&nbsp;</b> de tu parada</div>`;
+      // ETA grande
+      document.getElementById('etaTiempo').textContent = '~' + minutos + ' min';
+      document.getElementById('etaSub').textContent = `A ${km.toFixed(2)} km de tu parada`;
+
+      const alerta = document.getElementById('alertaCerca');
+      if (km < 0.4) { alerta.style.display = 'block'; document.getElementById('etaTiempo').textContent = '¡Llegando!'; }
+      else alerta.style.display = 'none';
     }
 
     async function cargar() {
       const bus = await (await fetch('/api/buses/' + busId)).json();
-      document.getElementById('titulo').textContent = '🚌 ' + bus.name;
-      const ruta = bus.route;
-      const centro = ruta && ruta.stops.length ? [ruta.stops[0].lat, ruta.stops[0].lng] : [-33.45, -70.66];
+      document.getElementById('titulo').textContent = bus.name;
+      RUTA = bus.route;
+      document.getElementById('subtitulo').textContent = RUTA ? (RUTA.name + (RUTA.city ? ' · ' + RUTA.city : '')) : 'Sin ruta';
+
+      const centro = RUTA && RUTA.stops.length ? [RUTA.stops[0].lat, RUTA.stops[0].lng] : [-33.45, -70.66];
       initMap(centro);
 
-      // Dibujar paradas
-      const ulParadas = document.getElementById('paradas');
-      const selParada = document.getElementById('selParada');
-      if (ruta && ruta.stops.length) {
-        ruta.stops.forEach((s) => {
-          L.circleMarker([s.lat, s.lng], { radius: 7, color: ruta.color, fillColor: '#fff', fillOpacity: 1, weight: 3 })
-            .addTo(map).bindPopup('Parada ' + s.order + ': ' + s.name);
-          ulParadas.innerHTML += `<li><span class="num">${s.order}</span>${s.name}</li>`;
-          selParada.innerHTML += `<option value="${s.lat},${s.lng}">${s.name}</option>`;
+      const tl = document.getElementById('timeline');
+      const sel = document.getElementById('selParada');
+      if (RUTA && RUTA.stops.length) {
+        RUTA.stops.forEach((s) => {
+          L.circleMarker([s.lat, s.lng], { radius: 8, color: RUTA.color, fillColor: '#fff', fillOpacity: 1, weight: 3 })
+            .addTo(map).bindPopup('<b>Parada ' + s.order + '</b><br>' + s.name);
+          tl.innerHTML += `<li data-lat="${s.lat}" data-lng="${s.lng}">
+              <span class="nombre-p">${s.name}</span>
+              <div class="meta-p">Parada ${s.order}</div></li>`;
+          sel.innerHTML += `<option value="${s.lat},${s.lng}">${s.name}</option>`;
         });
-        // Línea de la ruta (usa path si existe; si no, une las paradas)
-        const linea = (ruta.path && ruta.path.length) ? ruta.path : ruta.stops.map((s) => [s.lat, s.lng]);
-        L.polyline(linea, { color: ruta.color, weight: 4, opacity: 0.6 }).addTo(map);
+        const linea = (RUTA.path && RUTA.path.length) ? RUTA.path : RUTA.stops.map((s) => [s.lat, s.lng]);
+        L.polyline(linea, { color: RUTA.color, weight: 5, opacity: .55 }).addTo(map);
+        const grupo = L.featureGroup(RUTA.stops.map((s) => L.marker([s.lat, s.lng])));
+        map.fitBounds(grupo.getBounds().pad(0.3));
       } else {
-        ulParadas.innerHTML = '<li class="muted">Esta ruta no tiene paradas.</li>';
+        tl.innerHTML = '<li class="muted">Esta ruta no tiene paradas.</li>';
       }
 
-      // Posición inicial del bus si está activo
-      if (bus.live && Date.now() - bus.live.ts < 30000) {
-        mostrarBus(bus.live);
-      }
+      if (bus.live && Date.now() - bus.live.ts < 30000) mostrarBus(bus.live);
 
-      selParada.addEventListener('change', (e) => {
+      sel.addEventListener('change', (e) => {
         if (miParadaMarker) map.removeLayer(miParadaMarker);
-        if (!e.target.value) { miParadaLatLng = null; document.getElementById('distParada').innerHTML = ''; return; }
+        if (!e.target.value) {
+          miParadaLatLng = null;
+          document.getElementById('distInfo').innerHTML = '';
+          document.getElementById('alertaCerca').style.display = 'none';
+          return;
+        }
         const [lat, lng] = e.target.value.split(',').map(Number);
         miParadaLatLng = [lat, lng];
-        miParadaMarker = L.marker([lat, lng]).addTo(map).bindPopup('📍 Tu parada').openPopup();
+        const estrella = L.divIcon({ html: '<div style="font-size:30px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.4))">📍</div>', className: '', iconSize: [30,30], iconAnchor: [15,30] });
+        miParadaMarker = L.marker([lat, lng], { icon: estrella }).addTo(map).bindPopup('Tu parada').openPopup();
         actualizarDistancia();
       });
     }
 
     function mostrarBus(loc) {
       busLatLng = [loc.lat, loc.lng];
-      if (!busMarker) busMarker = L.marker(busLatLng, { icon: busIcon }).addTo(map);
+      ultimaSenal = Date.now();
+      if (!busMarker) busMarker = L.marker(busLatLng, { icon: busIcon, zIndexOffset: 1000 }).addTo(map);
       else busMarker.setLatLng(busLatLng);
-      window.__ultimaSenal = Date.now();
-      document.getElementById('estado').textContent = '🟢 En ruta';
-      document.getElementById('actualizado').textContent = 'Actualizado ' + new Date(loc.ts).toLocaleTimeString();
-      map.panTo(busLatLng);
+
+      // Rastro del recorrido
+      rastroPts.push(busLatLng);
+      if (rastroPts.length > 100) rastroPts.shift();
+      if (rastro) rastro.setLatLngs(rastroPts);
+      else rastro = L.polyline(rastroPts, { color: '#7c3aed', weight: 3, opacity: .5, dashArray: '4 6' }).addTo(map);
+
+      document.getElementById('estadoDot').textContent = '🟢';
+      document.getElementById('estadoTxt').textContent = 'En ruta · actualizado ' + new Date(loc.ts).toLocaleTimeString();
+      document.getElementById('flotante').style.display = 'flex';
+      document.getElementById('flotanteVel').textContent = (loc.speed || 0) + ' km/h';
+      if (!miParadaLatLng) { document.getElementById('etaTiempo').textContent = '🟢'; document.getElementById('etaSub').textContent = 'Bus en movimiento — elige tu parada'; }
+      map.panTo(busLatLng, { animate: true });
       actualizarDistancia();
     }
+
+    function sinSenal() {
+      document.getElementById('estadoDot').textContent = '🟡';
+      document.getElementById('estadoTxt').textContent = 'Sin señal del bus…';
+      document.getElementById('flotante').style.display = 'none';
+    }
+    function detenido() {
+      document.getElementById('estadoDot').textContent = '⚪';
+      document.getElementById('estadoTxt').textContent = 'El bus finalizó su recorrido';
+      document.getElementById('etaTiempo').textContent = '—';
+      document.getElementById('flotante').style.display = 'none';
+    }
+
+    // Compartir
+    document.getElementById('btnCompartir').addEventListener('click', async () => {
+      const datos = { title: 'Seguimiento del bus', text: 'Sigue el bus escolar en vivo', url: location.href };
+      if (navigator.share) { try { await navigator.share(datos); } catch (e) {} }
+      else { await navigator.clipboard.writeText(location.href); alert('🔗 Link copiado al portapapeles'); }
+    });
 
     // Tiempo real
     const socket = io();
     socket.on('connect', () => socket.emit('subscribe', busId));
     socket.on('location:update', (d) => { if (d.busId === busId) mostrarBus(d); });
+    socket.on('bus:status', (d) => { if (d.busId === busId && !d.active) detenido(); });
 
-    // Detectar si el bus dejó de emitir (sin señal > 25s)
     setInterval(() => {
-      if (busLatLng && Date.now() - (window.__ultimaSenal || 0) > 25000) {
-        document.getElementById('estado').textContent = '🟡 Sin señal';
-      }
+      if (busLatLng && Date.now() - ultimaSenal > 25000) sinSenal();
     }, 5000);
-    socket.on('bus:status', (d) => {
-      if (d.busId === busId && !d.active) {
-        document.getElementById('estado').textContent = '⚪ Detenido';
-        document.getElementById('actualizado').textContent = 'El bus finalizó su recorrido';
-      }
-    });
 
     cargar();
   </script>

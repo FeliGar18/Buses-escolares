@@ -6,52 +6,115 @@
   <title>Buses Escolares — Seguimiento en vivo</title>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
-<body>
-  <header class="barra">
-    <h1>🚌 Buses Escolares</h1>
+<body class="app">
+  <header class="hero">
+    <div class="marca">
+      <div class="logo">🚌</div>
+      <div>
+        <h1>Buses Escolares</h1>
+        <p>Seguimiento en tiempo real</p>
+      </div>
+    </div>
     <nav>
-      <a href="/">Inicio</a>
+      <a href="/" class="activo">Inicio</a>
       <a href="/admin.html">Admin</a>
       <a href="/driver.html">Chofer</a>
     </nav>
   </header>
 
   <div class="contenedor">
-    <div class="aviso">
-      Selecciona el bus de tu hijo/a para verlo en el mapa en tiempo real. 🟢 = en ruta ahora.
+    <!-- Resumen -->
+    <div class="stats">
+      <div class="stat">
+        <div class="ico azul">🚌</div>
+        <div><div class="num" id="stTotal">0</div><div class="lbl">Buses registrados</div></div>
+      </div>
+      <div class="stat">
+        <div class="ico verde">🟢</div>
+        <div><div class="num" id="stActivos">0</div><div class="lbl">En ruta ahora</div></div>
+      </div>
+      <div class="stat">
+        <div class="ico morado">📍</div>
+        <div><div class="num" id="stRutas">0</div><div class="lbl">Rutas activas</div></div>
+      </div>
     </div>
-    <div id="lista"></div>
+
+    <!-- Buscador -->
+    <div class="buscador">
+      <span class="lupa">🔍</span>
+      <input id="busca" placeholder="Busca por bus, ruta o ciudad…" />
+    </div>
+
+    <!-- Grilla de buses -->
+    <div class="grid-buses" id="grid"></div>
   </div>
 
   <script>
-    async function cargar() {
-      const buses = await (await fetch('/api/buses')).json();
-      const cont = document.getElementById('lista');
-      if (!buses.length) {
-        cont.innerHTML = '<p class="muted">No hay buses registrados. Ve a <a href="/admin.html">Admin</a> para crear uno.</p>';
+    let TODOS = [];
+
+    function tarjeta(b) {
+      const activo = b.live && (Date.now() - b.live.ts < 30000);
+      const ciudad = b.route ? (b.route.city || '') : '';
+      const nParadas = b.route ? b.route.stops.length : 0;
+      return `
+        <a class="bus-card" href="/track.html?bus=${b.id}">
+          <div class="top">
+            <div class="emoji">🚌</div>
+            <span class="badge-2 ${activo ? 'on' : 'off'}">
+              <span class="dot"></span>${activo ? 'En ruta' : 'Detenido'}
+            </span>
+          </div>
+          <div class="cuerpo">
+            <h3>${b.name}</h3>
+            <div class="ruta-info">📍 ${b.route ? b.route.name : 'Sin ruta asignada'}${ciudad ? ' · ' + ciudad : ''}</div>
+            ${b.plate ? `<div class="ruta-info">🔖 Patente ${b.plate}</div>` : ''}
+            ${b.driverName ? `<div class="ruta-info">🧑‍✈️ ${b.driverName}</div>` : ''}
+            <div class="pie">
+              <span>${nParadas} parada${nParadas === 1 ? '' : 's'}</span>
+              <span>Ver en vivo <span class="flecha">→</span></span>
+            </div>
+          </div>
+        </a>`;
+    }
+
+    function pintar(lista) {
+      const grid = document.getElementById('grid');
+      if (!lista.length) {
+        grid.innerHTML = `<div class="vacio" style="grid-column:1/-1;">
+          <div class="big">🚍</div>
+          <h3>No hay buses para mostrar</h3>
+          <p class="muted">Ve a <a href="/admin.html">Administración</a> para crear rutas y buses.</p>
+        </div>`;
         return;
       }
-      cont.innerHTML = buses.map((b) => {
-        const activo = b.live && (Date.now() - b.live.ts < 30000);
-        const ciudad = b.route ? (b.route.city || '') : '';
-        return `
-          <a class="card card-bus" href="/track.html?bus=${b.id}">
-            <div class="nombre">
-              ${b.name}
-              <span class="badge ${activo ? 'on' : 'off'}">
-                <span class="dot"></span>${activo ? 'En ruta' : 'Detenido'}
-              </span>
-            </div>
-            <div class="meta">
-              ${b.route ? '📍 ' + b.route.name : 'Sin ruta asignada'}
-              ${ciudad ? ' · ' + ciudad : ''}
-              ${b.plate ? ' · Patente ' + b.plate : ''}
-            </div>
-          </a>`;
-      }).join('');
+      grid.innerHTML = lista.map(tarjeta).join('');
     }
+
+    async function cargar() {
+      const buses = await (await fetch('/api/buses')).json();
+      const rutas = await (await fetch('/api/routes')).json();
+      TODOS = buses;
+
+      const activos = buses.filter((b) => b.live && Date.now() - b.live.ts < 30000).length;
+      document.getElementById('stTotal').textContent = buses.length;
+      document.getElementById('stActivos').textContent = activos;
+      document.getElementById('stRutas').textContent = rutas.length;
+
+      filtrar();
+    }
+
+    function filtrar() {
+      const q = document.getElementById('busca').value.toLowerCase().trim();
+      if (!q) return pintar(TODOS);
+      pintar(TODOS.filter((b) => {
+        const txt = `${b.name} ${b.plate || ''} ${b.driverName || ''} ${b.route ? b.route.name + ' ' + (b.route.city || '') : ''}`.toLowerCase();
+        return txt.includes(q);
+      }));
+    }
+
+    document.getElementById('busca').addEventListener('input', filtrar);
     cargar();
-    setInterval(cargar, 15000);
+    setInterval(cargar, 12000);
   </script>
 </body>
 </html>
