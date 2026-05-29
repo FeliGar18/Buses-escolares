@@ -1,0 +1,25 @@
+{
+  "routes": [
+    {
+      "id": "r_demo1",
+      "name": "Ruta Norte",
+      "city": "Santiago",
+      "color": "#2563eb",
+      "stops": [
+        { "id": "s_demo1", "order": 1, "name": "Plaza de Armas", "lat": -33.4372, "lng": -70.6506 },
+        { "id": "s_demo2", "order": 2, "name": "Estación Mapocho", "lat": -33.4326, "lng": -70.6533 },
+        { "id": "s_demo3", "order": 3, "name": "Parque Forestal", "lat": -33.4356, "lng": -70.6411 }
+      ],
+      "path": []
+    }
+  ],
+  "buses": [
+    {
+      "id": "b_demo1",
+      "name": "Bus 1",
+      "plate": "JKLM-34",
+      "routeId": "r_demo1",
+      "driverName": "Juan Pérez"
+    }
+  ]
+}

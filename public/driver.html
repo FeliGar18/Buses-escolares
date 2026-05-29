@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Modo Chofer — Emitir ubicación</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="barra">
+    <h1>🧑‍✈️ Modo Chofer</h1>
+    <nav><a href="/">Inicio</a></nav>
+  </header>
+
+  <div class="contenedor">
+    <div class="aviso">
+      Esta pantalla usa el GPS del celular para enviar la ubicación del bus.
+      Manténla abierta durante el recorrido. (Requiere permiso de ubicación.)
+    </div>
+
+    <div class="card">
+      <div id="conexion" class="badge off" style="margin-bottom:10px;">
+        <span class="dot"></span><span id="conexionTxt">Conectando…</span>
+      </div>
+      <label>Selecciona tu bus</label>
+      <select id="selBus"></select>
+
+      <button id="btnIniciar" class="grande exito">▶️ Iniciar recorrido</button>
+      <button id="btnDetener" class="grande peligro" style="display:none;">⏹️ Finalizar recorrido</button>
+    </div>
+
+    <div class="card" id="estadoCard" style="display:none;">
+      <h2>Estado</h2>
+      <p><b>Bus:</b> <span id="eBus">—</span></p>
+      <p><b>Ubicación:</b> <span id="eCoord">—</span></p>
+      <p><b>Velocidad:</b> <span id="eVel">—</span></p>
+      <p><b>Última señal:</b> <span id="eHora">—</span></p>
+      <p class="muted" id="eEnvios">0 envíos</p>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let watchId = null, busId = null, envios = 0, wakeLock = null;
+
+    // Indicador de conexión con el servidor
+    function setConexion(ok) {
+      const b = document.getElementById('conexion');
+      b.className = 'badge ' + (ok ? 'on' : 'off');
+      document.getElementById('conexionTxt').textContent = ok ? 'Conectado al servidor' : 'Sin conexión…';
+    }
+    socket.on('connect', () => setConexion(true));
+    socket.on('disconnect', () => setConexion(false));
+
+    // Mantener la pantalla encendida durante el recorrido (Wake Lock API)
+    async function pedirWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (e) { /* algunos navegadores no lo soportan */ }
+    }
+    // Re-pedir el wake lock si el usuario vuelve a la pestaña
+    document.addEventListener('visibilitychange', () => {
+      if (wakeLock !== null && document.visibilityState === 'visible' && watchId !== null) pedirWakeLock();
+    });
+
+    async function cargarBuses() {
+      const buses = await (await fetch('/api/buses')).json();
+      const sel = document.getElementById('selBus');
+      sel.innerHTML = buses.map((b) =>
+        `<option value="${b.id}">${b.name}${b.plate ? ' (' + b.plate + ')' : ''}</option>`
+      ).join('') || '<option value="">No hay buses</option>';
+    }
+
+    document.getElementById('btnIniciar').addEventListener('click', () => {
+      busId = document.getElementById('selBus').value;
+      if (!busId) return alert('No hay bus seleccionado');
+      if (!navigator.geolocation) return alert('Tu dispositivo no soporta GPS');
+
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const { latitude, longitude, speed, heading } = pos.coords;
+          socket.emit('driver:location', {
+            busId,
+            lat: latitude,
+            lng: longitude,
+            speed: speed ? Math.round(speed * 3.6) : 0, // m/s -> km/h
+            heading: heading || 0,
+          });
+          envios++;
+          document.getElementById('eCoord').textContent = latitude.toFixed(5) + ', ' + longitude.toFixed(5);
+          document.getElementById('eVel').textContent = (speed ? Math.round(speed * 3.6) : 0) + ' km/h';
+          document.getElementById('eHora').textContent = new Date().toLocaleTimeString();
+          document.getElementById('eEnvios').textContent = envios + ' envíos';
+        },
+        (err) => alert('Error de GPS: ' + err.message),
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+      );
+
+      socket.emit('driver:status', { busId, active: true });
+      pedirWakeLock();
+      document.getElementById('eBus').textContent = document.getElementById('selBus').selectedOptions[0].text;
+      document.getElementById('btnIniciar').style.display = 'none';
+      document.getElementById('btnDetener').style.display = 'block';
+      document.getElementById('estadoCard').style.display = 'block';
+    });
+
+    document.getElementById('btnDetener').addEventListener('click', () => {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+      socket.emit('driver:status', { busId, active: false });
+      document.getElementById('btnIniciar').style.display = 'block';
+      document.getElementById('btnDetener').style.display = 'none';
+      document.getElementById('estadoCard').style.display = 'none';
+      envios = 0;
+    });
+
+    cargarBuses();
+  </script>
+</body>
+</html>

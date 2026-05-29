@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Buses Escolares — Seguimiento en vivo</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="barra">
+    <h1>🚌 Buses Escolares</h1>
+    <nav>
+      <a href="/">Inicio</a>
+      <a href="/admin.html">Admin</a>
+      <a href="/driver.html">Chofer</a>
+    </nav>
+  </header>
+
+  <div class="contenedor">
+    <div class="aviso">
+      Selecciona el bus de tu hijo/a para verlo en el mapa en tiempo real. 🟢 = en ruta ahora.
+    </div>
+    <div id="lista"></div>
+  </div>
+
+  <script>
+    async function cargar() {
+      const buses = await (await fetch('/api/buses')).json();
+      const cont = document.getElementById('lista');
+      if (!buses.length) {
+        cont.innerHTML = '<p class="muted">No hay buses registrados. Ve a <a href="/admin.html">Admin</a> para crear uno.</p>';
+        return;
+      }
+      cont.innerHTML = buses.map((b) => {
+        const activo = b.live && (Date.now() - b.live.ts < 30000);
+        const ciudad = b.route ? (b.route.city || '') : '';
+        return `
+          <a class="card card-bus" href="/track.html?bus=${b.id}">
+            <div class="nombre">
+              ${b.name}
+              <span class="badge ${activo ? 'on' : 'off'}">
+                <span class="dot"></span>${activo ? 'En ruta' : 'Detenido'}
+              </span>
+            </div>
+            <div class="meta">
+              ${b.route ? '📍 ' + b.route.name : 'Sin ruta asignada'}
+              ${ciudad ? ' · ' + ciudad : ''}
+              ${b.plate ? ' · Patente ' + b.plate : ''}
+            </div>
+          </a>`;
+      }).join('');
+    }
+    cargar();
+    setInterval(cargar, 15000);
+  </script>
+</body>
+</html>

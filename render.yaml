@@ -1,0 +1,12 @@
+# Blueprint de Render: despliega la plataforma con un clic.
+# En Render: New + > Blueprint > conecta este repo y aplica.
+services:
+  - type: web
+    name: buses-escolares
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.13.1

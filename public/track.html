@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seguimiento del bus</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="barra">
+    <h1 id="titulo">🚌 Seguimiento</h1>
+    <nav><a href="/">← Volver</a></nav>
+  </header>
+
+  <div class="layout-mapa">
+    <div class="panel">
+      <div class="eta-box">
+        <div class="chico">Estado del bus</div>
+        <div class="grande" id="estado">—</div>
+        <div class="chico" id="actualizado"></div>
+      </div>
+
+      <div class="card">
+        <h2>Mi parada</h2>
+        <select id="selParada"><option value="">— Elige tu parada —</option></select>
+        <div id="distParada" class="muted" style="margin-top:10px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>Paradas de la ruta</h2>
+        <ul class="lista-paradas" id="paradas"></ul>
+      </div>
+
+      <p class="muted">Comparte este link con otros apoderados: la página se actualiza sola.</p>
+    </div>
+    <div class="panel-mapa"><div id="map"></div></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const busId = new URLSearchParams(location.search).get('bus');
+    let map, busMarker, miParadaMarker = null;
+    let busLatLng = null, miParadaLatLng = null;
+
+    // Icono del bus
+    const busIcon = L.divIcon({
+      html: '<div style="font-size:30px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.4))">🚌</div>',
+      className: '', iconSize: [30, 30], iconAnchor: [15, 15],
+    });
+
+    function initMap(center) {
+      map = L.map('map').setView(center, 14);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap', maxZoom: 19,
+      }).addTo(map);
+    }
+
+    function distanciaKm(a, b) {
+      const R = 6371, rad = (d) => (d * Math.PI) / 180;
+      const dLat = rad(b[0] - a[0]), dLng = rad(b[1] - a[1]);
+      const x = Math.sin(dLat/2)**2 + Math.cos(rad(a[0]))*Math.cos(rad(b[0]))*Math.sin(dLng/2)**2;
+      return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    }
+
+    function actualizarDistancia() {
+      if (!busLatLng || !miParadaLatLng) return;
+      const km = distanciaKm(busLatLng, miParadaLatLng);
+      const minutos = Math.max(1, Math.round((km / 25) * 60)); // ~25 km/h promedio urbano
+      const box = document.getElementById('distParada');
+      let texto = `🚌 El bus está a <b>${km.toFixed(2)} km</b> de tu parada (~${minutos} min).`;
+      if (km < 0.4) texto = '🔔 <b>¡El bus está llegando a tu parada!</b>';
+      box.innerHTML = texto;
+    }
+
+    async function cargar() {
+      const bus = await (await fetch('/api/buses/' + busId)).json();
+      document.getElementById('titulo').textContent = '🚌 ' + bus.name;
+      const ruta = bus.route;
+      const centro = ruta && ruta.stops.length ? [ruta.stops[0].lat, ruta.stops[0].lng] : [-33.45, -70.66];
+      initMap(centro);
+
+      // Dibujar paradas
+      const ulParadas = document.getElementById('paradas');
+      const selParada = document.getElementById('selParada');
+      if (ruta && ruta.stops.length) {
+        ruta.stops.forEach((s) => {
+          L.circleMarker([s.lat, s.lng], { radius: 7, color: ruta.color, fillColor: '#fff', fillOpacity: 1, weight: 3 })
+            .addTo(map).bindPopup('Parada ' + s.order + ': ' + s.name);
+          ulParadas.innerHTML += `<li><span class="num">${s.order}</span>${s.name}</li>`;
+          selParada.innerHTML += `<option value="${s.lat},${s.lng}">${s.name}</option>`;
+        });
+        // Línea de la ruta (usa path si existe; si no, une las paradas)
+        const linea = (ruta.path && ruta.path.length) ? ruta.path : ruta.stops.map((s) => [s.lat, s.lng]);
+        L.polyline(linea, { color: ruta.color, weight: 4, opacity: 0.6 }).addTo(map);
+      } else {
+        ulParadas.innerHTML = '<li class="muted">Esta ruta no tiene paradas.</li>';
+      }
+
+      // Posición inicial del bus si está activo
+      if (bus.live && Date.now() - bus.live.ts < 30000) {
+        mostrarBus(bus.live);
+      }
+
+      selParada.addEventListener('change', (e) => {
+        if (miParadaMarker) map.removeLayer(miParadaMarker);
+        if (!e.target.value) { miParadaLatLng = null; document.getElementById('distParada').innerHTML = ''; return; }
+        const [lat, lng] = e.target.value.split(',').map(Number);
+        miParadaLatLng = [lat, lng];
+        miParadaMarker = L.marker([lat, lng]).addTo(map).bindPopup('📍 Tu parada').openPopup();
+        actualizarDistancia();
+      });
+    }
+
+    function mostrarBus(loc) {
+      busLatLng = [loc.lat, loc.lng];
+      if (!busMarker) busMarker = L.marker(busLatLng, { icon: busIcon }).addTo(map);
+      else busMarker.setLatLng(busLatLng);
+      window.__ultimaSenal = Date.now();
+      document.getElementById('estado').textContent = '🟢 En ruta';
+      document.getElementById('actualizado').textContent = 'Actualizado ' + new Date(loc.ts).toLocaleTimeString();
+      map.panTo(busLatLng);
+      actualizarDistancia();
+    }
+
+    // Tiempo real
+    const socket = io();
+    socket.on('connect', () => socket.emit('subscribe', busId));
+    socket.on('location:update', (d) => { if (d.busId === busId) mostrarBus(d); });
+
+    // Detectar si el bus dejó de emitir (sin señal > 25s)
+    setInterval(() => {
+      if (busLatLng && Date.now() - (window.__ultimaSenal || 0) > 25000) {
+        document.getElementById('estado').textContent = '🟡 Sin señal';
+      }
+    }, 5000);
+    socket.on('bus:status', (d) => {
+      if (d.busId === busId && !d.active) {
+        document.getElementById('estado').textContent = '⚪ Detenido';
+        document.getElementById('actualizado').textContent = 'El bus finalizó su recorrido';
+      }
+    });
+
+    cargar();
+  </script>
+</body>
+</html>
