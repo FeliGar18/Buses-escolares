@@ -4,11 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Modo Chofer — Emitir ubicación</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
-<body>
-  <header class="barra">
-    <h1>🧑‍✈️ Modo Chofer</h1>
+<body class="app">
+  <header class="hero">
+    <div class="marca">
+      <div class="logo">🧑‍✈️</div>
+      <div><h1>Modo Chofer</h1><p>Comparte tu ubicación</p></div>
+    </div>
     <nav><a href="/">Inicio</a></nav>
   </header>
 
@@ -18,33 +22,50 @@
       Manténla abierta durante el recorrido. (Requiere permiso de ubicación.)
     </div>
 
-    <div class="card">
+    <div class="card-soft">
       <div id="conexion" class="badge off" style="margin-bottom:10px;">
         <span class="dot"></span><span id="conexionTxt">Conectando…</span>
       </div>
       <label>Selecciona tu bus</label>
-      <select id="selBus"></select>
+      <select id="selBus" class="sel-bonito" style="width:100%;"></select>
 
       <button id="btnIniciar" class="grande exito">▶️ Iniciar recorrido</button>
       <button id="btnDetener" class="grande peligro" style="display:none;">⏹️ Finalizar recorrido</button>
     </div>
 
-    <div class="card" id="estadoCard" style="display:none;">
-      <h2>Estado</h2>
+    <div class="card-soft" id="estadoCard" style="display:none;">
+      <h2>📡 Estado</h2>
       <p><b>Bus:</b> <span id="eBus">—</span></p>
       <p><b>Ubicación:</b> <span id="eCoord">—</span></p>
       <p><b>Velocidad:</b> <span id="eVel">—</span></p>
       <p><b>Última señal:</b> <span id="eHora">—</span></p>
       <p class="muted" id="eEnvios">0 envíos</p>
     </div>
+
+    <!-- ===== Editor de ruta del propio bus ===== -->
+    <div class="card-soft">
+      <h2>🗺️ Mi ruta <span class="muted" id="rutaNombre"></span></h2>
+      <p class="muted" id="rutaAyuda">Selecciona un bus para ver y editar su ruta.</p>
+      <button id="btnEditarRuta" class="grande" style="display:none;">✏️ Editar mi ruta</button>
+
+      <div id="editorRuta" style="display:none;margin-top:12px;">
+        <div class="aviso" style="margin-bottom:10px;">Haz <b>clic en el mapa</b> para agregar paradas. Arrastra el orden con ▲▼.</div>
+        <div id="mapEditor" style="height:300px;border-radius:14px;overflow:hidden;margin-bottom:12px;"></div>
+        <ul class="lista-paradas" id="listaParadas"></ul>
+        <button id="btnGuardarRuta" class="grande exito">💾 Guardar ruta</button>
+        <button id="btnCancelarRuta" class="sec grande">Cancelar</button>
+      </div>
+    </div>
   </div>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
     let watchId = null, busId = null, envios = 0, wakeLock = null;
+    let BUSES = [], rutaActual = null;
+    let mapEd = null, paradas = [], capas = [], lineaEd = null;
 
-    // Indicador de conexión con el servidor
     function setConexion(ok) {
       const b = document.getElementById('conexion');
       b.className = 'badge ' + (ok ? 'on' : 'off');
@@ -53,27 +74,134 @@
     socket.on('connect', () => setConexion(true));
     socket.on('disconnect', () => setConexion(false));
 
-    // Mantener la pantalla encendida durante el recorrido (Wake Lock API)
     async function pedirWakeLock() {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-        }
-      } catch (e) { /* algunos navegadores no lo soportan */ }
+      try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     }
-    // Re-pedir el wake lock si el usuario vuelve a la pestaña
     document.addEventListener('visibilitychange', () => {
       if (wakeLock !== null && document.visibilityState === 'visible' && watchId !== null) pedirWakeLock();
     });
 
     async function cargarBuses() {
-      const buses = await (await fetch('/api/buses')).json();
+      BUSES = await (await fetch('/api/buses')).json();
       const sel = document.getElementById('selBus');
-      sel.innerHTML = buses.map((b) =>
+      sel.innerHTML = BUSES.map((b) =>
         `<option value="${b.id}">${b.name}${b.plate ? ' (' + b.plate + ')' : ''}</option>`
       ).join('') || '<option value="">No hay buses</option>';
+      mostrarRutaDelBus();
     }
 
+    // ---- Mostrar info de la ruta del bus seleccionado ----
+    function busSeleccionado() { return BUSES.find((b) => b.id === document.getElementById('selBus').value); }
+
+    function mostrarRutaDelBus() {
+      const bus = busSeleccionado();
+      rutaActual = bus ? bus.route : null;
+      const nombre = document.getElementById('rutaNombre');
+      const ayuda = document.getElementById('rutaAyuda');
+      const btn = document.getElementById('btnEditarRuta');
+      if (!bus) { ayuda.textContent = 'Selecciona un bus.'; btn.style.display = 'none'; return; }
+      if (rutaActual) {
+        nombre.textContent = '· ' + rutaActual.name;
+        ayuda.textContent = `${rutaActual.stops.length} paradas` + (rutaActual.city ? ' · ' + rutaActual.city : '');
+        btn.textContent = '✏️ Editar mi ruta';
+      } else {
+        nombre.textContent = '';
+        ayuda.textContent = 'Este bus no tiene ruta. Puedes crear una.';
+        btn.textContent = '➕ Crear ruta para este bus';
+      }
+      btn.style.display = 'block';
+    }
+
+    document.getElementById('selBus').addEventListener('change', mostrarRutaDelBus);
+
+    // ---- Editor de ruta ----
+    document.getElementById('btnEditarRuta').addEventListener('click', abrirEditor);
+    document.getElementById('btnCancelarRuta').addEventListener('click', cerrarEditor);
+
+    function abrirEditor() {
+      document.getElementById('editorRuta').style.display = 'block';
+      document.getElementById('btnEditarRuta').style.display = 'none';
+      paradas = rutaActual ? rutaActual.stops.map((s) => ({ name: s.name, lat: s.lat, lng: s.lng })) : [];
+
+      if (!mapEd) {
+        mapEd = L.map('mapEditor').setView([-33.45, -70.66], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM', maxZoom: 19 }).addTo(mapEd);
+        mapEd.on('click', (e) => {
+          const nombre = prompt('Nombre de la parada ' + (paradas.length + 1) + ':', 'Parada ' + (paradas.length + 1));
+          if (nombre === null) return;
+          paradas.push({ name: nombre, lat: e.latlng.lat, lng: e.latlng.lng });
+          renderEd();
+        });
+      }
+      setTimeout(() => mapEd.invalidateSize(), 100);
+      renderEd();
+      if (paradas.length) {
+        setTimeout(() => mapEd.fitBounds(L.featureGroup(paradas.map((p) => L.marker([p.lat, p.lng]))).getBounds().pad(0.3)), 150);
+      }
+    }
+
+    function cerrarEditor() {
+      document.getElementById('editorRuta').style.display = 'none';
+      document.getElementById('btnEditarRuta').style.display = 'block';
+    }
+
+    function renderEd() {
+      capas.forEach((c) => mapEd.removeLayer(c));
+      capas = [];
+      if (lineaEd) { mapEd.removeLayer(lineaEd); lineaEd = null; }
+      paradas.forEach((p, i) => {
+        const icon = L.divIcon({
+          html: `<div style="background:#2563eb;color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.3)">${i + 1}</div>`,
+          className: '', iconSize: [26, 26], iconAnchor: [13, 13],
+        });
+        capas.push(L.marker([p.lat, p.lng], { icon }).addTo(mapEd).bindPopup(p.name));
+      });
+      if (paradas.length > 1) lineaEd = L.polyline(paradas.map((p) => [p.lat, p.lng]), { color: '#2563eb', weight: 4, opacity: .6 }).addTo(mapEd);
+
+      const ul = document.getElementById('listaParadas');
+      ul.innerHTML = paradas.length
+        ? paradas.map((p, i) =>
+            `<li><span class="num">${i + 1}</span>
+               <span style="flex:1">${p.name}</span>
+               <button class="sec" onclick="movP(${i},-1)" ${i === 0 ? 'disabled' : ''}>▲</button>
+               <button class="sec" onclick="movP(${i},1)" ${i === paradas.length - 1 ? 'disabled' : ''}>▼</button>
+               <button class="sec" onclick="renP(${i})">✏️</button>
+               <button class="peligro" onclick="delP(${i})">✕</button></li>`
+          ).join('')
+        : '<li class="muted">Haz clic en el mapa para agregar paradas.</li>';
+    }
+    window.movP = (i, d) => { const j = i + d; if (j < 0 || j >= paradas.length) return; [paradas[i], paradas[j]] = [paradas[j], paradas[i]]; renderEd(); };
+    window.renP = (i) => { const n = prompt('Nuevo nombre:', paradas[i].name); if (n !== null) { paradas[i].name = n; renderEd(); } };
+    window.delP = (i) => { paradas.splice(i, 1); renderEd(); };
+
+    document.getElementById('btnGuardarRuta').addEventListener('click', async () => {
+      if (!paradas.length) return alert('Agrega al menos una parada');
+      const bus = busSeleccionado();
+      if (rutaActual) {
+        // Editar la ruta existente
+        await fetch('/api/routes/' + rutaActual.id, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stops: paradas }),
+        });
+      } else {
+        // Crear ruta nueva y asignarla al bus
+        const nombre = prompt('Nombre de la nueva ruta:', 'Ruta de ' + bus.name);
+        if (nombre === null) return;
+        const nueva = await (await fetch('/api/routes', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: nombre, stops: paradas }),
+        })).json();
+        await fetch('/api/buses/' + bus.id, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ routeId: nueva.id }),
+        });
+      }
+      alert('✅ Ruta guardada');
+      cerrarEditor();
+      await cargarBuses();
+    });
+
+    // ---- Emisión GPS ----
     document.getElementById('btnIniciar').addEventListener('click', () => {
       busId = document.getElementById('selBus').value;
       if (!busId) return alert('No hay bus seleccionado');
@@ -83,11 +211,8 @@
         (pos) => {
           const { latitude, longitude, speed, heading } = pos.coords;
           socket.emit('driver:location', {
-            busId,
-            lat: latitude,
-            lng: longitude,
-            speed: speed ? Math.round(speed * 3.6) : 0, // m/s -> km/h
-            heading: heading || 0,
+            busId, lat: latitude, lng: longitude,
+            speed: speed ? Math.round(speed * 3.6) : 0, heading: heading || 0,
           });
           envios++;
           document.getElementById('eCoord').textContent = latitude.toFixed(5) + ', ' + longitude.toFixed(5);

@@ -7,17 +7,20 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
-<body>
-  <header class="barra">
-    <h1>⚙️ Administración</h1>
+<body class="app">
+  <header class="hero">
+    <div class="marca">
+      <div class="logo">⚙️</div>
+      <div><h1>Administración</h1><p>Rutas, paradas y buses</p></div>
+    </div>
     <nav><a href="/">Inicio</a> <a href="/driver.html">Chofer</a></nav>
   </header>
 
-  <div class="layout-mapa">
-    <div class="panel">
-      <div class="card">
-        <h2>1. Crear ruta</h2>
-        <div class="aviso">Haz <b>clic en el mapa</b> para agregar paradas en orden. ➡️</div>
+  <div class="track-layout">
+    <div class="track-panel">
+      <div class="card-soft">
+        <h2 id="tituloRuta">🗺️ Crear ruta</h2>
+        <div class="aviso" style="margin:10px 0;">Haz <b>clic en el mapa</b> para agregar paradas en orden. ➡️</div>
         <label>Nombre de la ruta</label>
         <input id="rNombre" placeholder="Ej: Ruta Norte" />
         <div class="fila">
@@ -27,24 +30,24 @@
           </div>
           <div>
             <label>Color</label>
-            <input id="rColor" type="color" value="#2563eb" style="height:38px;padding:3px;" />
+            <input id="rColor" type="color" value="#2563eb" style="height:42px;padding:3px;" />
           </div>
         </div>
 
-        <h2 style="margin-top:14px;">Paradas marcadas</h2>
+        <h2 style="margin-top:16px;">📍 Paradas <span class="muted" id="contParadas"></span></h2>
         <ul class="lista-paradas" id="paradasNuevas"><li class="muted">Aún no hay paradas.</li></ul>
 
         <button id="btnGuardarRuta" class="grande exito">💾 Guardar ruta</button>
-        <button id="btnLimpiar" class="sec grande">Limpiar</button>
+        <button id="btnLimpiar" class="sec grande">Cancelar / Limpiar</button>
       </div>
 
-      <div class="card">
-        <h2>Rutas existentes</h2>
+      <div class="card-soft">
+        <h2>🚏 Rutas existentes</h2>
         <div id="listaRutas"></div>
       </div>
 
-      <div class="card">
-        <h2>2. Registrar bus</h2>
+      <div class="card-soft">
+        <h2>🚌 Registrar bus</h2>
         <label>Nombre del bus</label>
         <input id="bNombre" placeholder="Ej: Bus 1" />
         <div class="fila">
@@ -52,21 +55,22 @@
           <div><label>Chofer</label><input id="bChofer" placeholder="Nombre" /></div>
         </div>
         <label>Ruta asignada</label>
-        <select id="bRuta"></select>
+        <select id="bRuta" class="sel-bonito" style="width:100%;"></select>
         <button id="btnGuardarBus" class="grande">💾 Registrar bus</button>
       </div>
 
-      <div class="card">
-        <h2>Buses existentes</h2>
+      <div class="card-soft">
+        <h2>🚐 Buses existentes</h2>
         <div id="listaBuses"></div>
       </div>
     </div>
-    <div class="panel-mapa"><div id="map"></div></div>
+    <div class="track-mapa"><div id="map"></div></div>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     let map, paradas = [], marcadores = [];
+    let editandoId = null; // null = creando, id = editando esa ruta
 
     function initMap() {
       map = L.map('map').setView([-33.45, -70.66], 13);
@@ -78,55 +82,117 @@
         const nombre = prompt('Nombre de la parada ' + (paradas.length + 1) + ':', 'Parada ' + (paradas.length + 1));
         if (nombre === null) return;
         paradas.push({ name: nombre, lat: e.latlng.lat, lng: e.latlng.lng });
-        const m = L.marker(e.latlng).addTo(map).bindPopup(nombre);
-        marcadores.push(m);
         render();
       });
     }
 
-    function render() {
-      const ul = document.getElementById('paradasNuevas');
-      if (!paradas.length) { ul.innerHTML = '<li class="muted">Aún no hay paradas.</li>'; return; }
-      ul.innerHTML = paradas.map((p, i) =>
-        `<li><span class="num">${i + 1}</span>${p.name}
-           <button class="peligro" onclick="quitarParada(${i})">✕</button></li>`
-      ).join('');
-    }
-
-    window.quitarParada = (i) => {
-      paradas.splice(i, 1);
-      map.removeLayer(marcadores[i]);
-      marcadores.splice(i, 1);
-      render();
-    };
-
-    document.getElementById('btnLimpiar').addEventListener('click', limpiar);
-    function limpiar() {
-      paradas = [];
+    let lineaRuta = null;
+    function redibujar() {
+      // Borra marcadores y línea, los vuelve a poner según 'paradas'
       marcadores.forEach((m) => map.removeLayer(m));
       marcadores = [];
+      if (lineaRuta) { map.removeLayer(lineaRuta); lineaRuta = null; }
+      paradas.forEach((p, i) => {
+        const icon = L.divIcon({
+          html: `<div style="background:${document.getElementById('rColor').value};color:#fff;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.3)">${i + 1}</div>`,
+          className: '', iconSize: [26, 26], iconAnchor: [13, 13],
+        });
+        const m = L.marker([p.lat, p.lng], { icon }).addTo(map).bindPopup(p.name);
+        marcadores.push(m);
+      });
+      if (paradas.length > 1) {
+        lineaRuta = L.polyline(paradas.map((p) => [p.lat, p.lng]), {
+          color: document.getElementById('rColor').value, weight: 4, opacity: .6,
+        }).addTo(map);
+      }
+    }
+
+    function render() {
+      const ul = document.getElementById('paradasNuevas');
+      document.getElementById('contParadas').textContent = paradas.length ? '(' + paradas.length + ')' : '';
+      if (!paradas.length) { ul.innerHTML = '<li class="muted">Aún no hay paradas.</li>'; redibujar(); return; }
+      ul.innerHTML = paradas.map((p, i) =>
+        `<li><span class="num">${i + 1}</span>
+           <span style="flex:1">${p.name}</span>
+           <button class="sec" onclick="moverParada(${i},-1)" ${i === 0 ? 'disabled' : ''} title="Subir">▲</button>
+           <button class="sec" onclick="moverParada(${i},1)" ${i === paradas.length - 1 ? 'disabled' : ''} title="Bajar">▼</button>
+           <button class="sec" onclick="renombrarParada(${i})" title="Renombrar">✏️</button>
+           <button class="peligro" onclick="quitarParada(${i})" title="Quitar">✕</button>
+         </li>`
+      ).join('');
+      redibujar();
+    }
+
+    window.quitarParada = (i) => { paradas.splice(i, 1); render(); };
+    window.moverParada = (i, dir) => {
+      const j = i + dir;
+      if (j < 0 || j >= paradas.length) return;
+      [paradas[i], paradas[j]] = [paradas[j], paradas[i]];
+      render();
+    };
+    window.renombrarParada = (i) => {
+      const nuevo = prompt('Nuevo nombre:', paradas[i].name);
+      if (nuevo !== null) { paradas[i].name = nuevo; render(); }
+    };
+
+    document.getElementById('rColor').addEventListener('input', redibujar);
+    document.getElementById('btnLimpiar').addEventListener('click', limpiar);
+
+    function limpiar() {
+      editandoId = null;
+      paradas = [];
+      redibujar();
       document.getElementById('rNombre').value = '';
       document.getElementById('rCiudad').value = '';
+      document.getElementById('rColor').value = '#2563eb';
+      document.getElementById('tituloRuta').textContent = '🗺️ Crear ruta';
+      document.getElementById('btnGuardarRuta').textContent = '💾 Guardar ruta';
       render();
     }
 
+    // ----- Guardar (crea o edita según editandoId) -----
     document.getElementById('btnGuardarRuta').addEventListener('click', async () => {
       const name = document.getElementById('rNombre').value.trim();
       if (!name) return alert('Ponle nombre a la ruta');
       if (!paradas.length) return alert('Marca al menos una parada en el mapa');
-      await fetch('/api/routes', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          city: document.getElementById('rCiudad').value.trim(),
-          color: document.getElementById('rColor').value,
-          stops: paradas,
-        }),
-      });
+      const payload = {
+        name,
+        city: document.getElementById('rCiudad').value.trim(),
+        color: document.getElementById('rColor').value,
+        stops: paradas,
+      };
+      if (editandoId) {
+        await fetch('/api/routes/' + editandoId, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        alert('✅ Ruta actualizada');
+      } else {
+        await fetch('/api/routes', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        alert('✅ Ruta creada');
+      }
       limpiar();
       cargarRutas();
-      alert('✅ Ruta guardada');
     });
+
+    // ----- Cargar una ruta para editarla -----
+    window.editarRuta = async (id) => {
+      const r = await (await fetch('/api/routes/' + id)).json();
+      editandoId = id;
+      paradas = r.stops.map((s) => ({ name: s.name, lat: s.lat, lng: s.lng }));
+      document.getElementById('rNombre').value = r.name;
+      document.getElementById('rCiudad').value = r.city || '';
+      document.getElementById('rColor').value = r.color || '#2563eb';
+      document.getElementById('tituloRuta').textContent = '✏️ Editando: ' + r.name;
+      document.getElementById('btnGuardarRuta').textContent = '💾 Guardar cambios';
+      render();
+      if (paradas.length) {
+        const grupo = L.featureGroup(paradas.map((p) => L.marker([p.lat, p.lng])));
+        map.fitBounds(grupo.getBounds().pad(0.3));
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
 
     document.getElementById('btnGuardarBus').addEventListener('click', async () => {
       const name = document.getElementById('bNombre').value.trim();
@@ -151,11 +217,16 @@
       const rutas = await (await fetch('/api/routes')).json();
       document.getElementById('listaRutas').innerHTML = rutas.length
         ? rutas.map((r) =>
-            `<div class="card" style="padding:10px;margin-bottom:8px;">
-               <b style="color:${r.color}">●</b> ${r.name}
-               <span class="muted">· ${r.city || 's/ciudad'} · ${r.stops.length} paradas</span>
-               <button class="peligro" style="float:right;padding:3px 8px;font-size:12px;"
-                 onclick="borrarRuta('${r.id}')">Borrar</button>
+            `<div style="padding:12px;margin-bottom:8px;background:#f8fafc;border-radius:12px;border:1px solid #eef2f7;">
+               <div style="display:flex;align-items:center;justify-content:space-between;">
+                 <div><b style="color:${r.color}">●</b> <b>${r.name}</b>
+                   <div class="muted" style="font-size:12px;">${r.city || 's/ciudad'} · ${r.stops.length} paradas</div>
+                 </div>
+                 <div style="display:flex;gap:6px;">
+                   <button class="sec" style="padding:6px 10px;font-size:12px;" onclick="editarRuta('${r.id}')">✏️ Editar</button>
+                   <button class="peligro" style="padding:6px 10px;font-size:12px;" onclick="borrarRuta('${r.id}')">🗑️</button>
+                 </div>
+               </div>
              </div>`
           ).join('')
         : '<p class="muted">Sin rutas todavía.</p>';
@@ -168,11 +239,16 @@
       const buses = await (await fetch('/api/buses')).json();
       document.getElementById('listaBuses').innerHTML = buses.length
         ? buses.map((b) =>
-            `<div class="card" style="padding:10px;margin-bottom:8px;">
-               🚌 <b>${b.name}</b>
-               <span class="muted">· ${b.route ? b.route.name : 'sin ruta'} ${b.plate ? '· ' + b.plate : ''}</span>
-               <button class="peligro" style="float:right;padding:3px 8px;font-size:12px;"
-                 onclick="borrarBus('${b.id}')">Borrar</button>
+            `<div style="padding:12px;margin-bottom:8px;background:#f8fafc;border-radius:12px;border:1px solid #eef2f7;">
+               <div style="display:flex;align-items:center;justify-content:space-between;">
+                 <div>🚌 <b>${b.name}</b>
+                   <div class="muted" style="font-size:12px;">${b.route ? b.route.name : 'sin ruta'} ${b.plate ? '· ' + b.plate : ''}</div>
+                 </div>
+                 <div style="display:flex;gap:6px;">
+                   ${b.route ? `<button class="sec" style="padding:6px 10px;font-size:12px;" onclick="editarRuta('${b.route.id}')">✏️ Ruta</button>` : ''}
+                   <button class="peligro" style="padding:6px 10px;font-size:12px;" onclick="borrarBus('${b.id}')">🗑️</button>
+                 </div>
+               </div>
              </div>`
           ).join('')
         : '<p class="muted">Sin buses todavía.</p>';
@@ -181,6 +257,7 @@
     window.borrarRuta = async (id) => {
       if (!confirm('¿Borrar esta ruta?')) return;
       await fetch('/api/routes/' + id, { method: 'DELETE' });
+      if (editandoId === id) limpiar();
       cargarRutas(); cargarBuses();
     };
     window.borrarBus = async (id) => {
